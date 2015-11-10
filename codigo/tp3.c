@@ -45,7 +45,7 @@ void cliente(int mi_serv_rank, t_params params)
         debug("\t¡Necesito mutex!");
         MPI_Send(NULL, 0, MPI_INT, mi_serv_rank, TAG_PEDIDO, COMM_WORLD);
 
-        //debug("\tEsperando respuesta de mi servidor");
+        debug("\tEsperando respuesta de mi servidor");
         MPI_Recv(NULL, 0, MPI_INT, mi_serv_rank, TAG_OTORGADO, COMM_WORLD, &status);
 
         debug("\tEntrando en sección crítica");
@@ -99,6 +99,7 @@ t_params parsear_primeros_args(char **argv)
 char ayuda[] = 
 "uso:\n\n"
 "  mpiexec -np <#ranks> ./tp3 [<char> <#iters> <ms_prev> <ms_crit>] [...]\n\n"
+"#ranks debe ser par\n"
 "ej.:\n\n"
 "  mpiexec -np 2 ./tp3\n"
 "  mpiexec -np 2 ./tp3  a 5 0 100\n"
