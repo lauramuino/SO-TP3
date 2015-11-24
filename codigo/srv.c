@@ -37,7 +37,7 @@ void servidor(int mi_cliente)
         a_servers_muertos[iterador] = 0; // Inicializando arreglo de servers muertos
         servers_que_otorgaron[iterador] = 0;
     }
-    servers_que_otorgaron[mi_rank/2] = 1;
+    servers_que_otorgaron[mi_rank/2] = 1; //siempre me doy permiso a mi mismo
 
     
     while( ! listo_para_salir ) {
@@ -79,22 +79,19 @@ void servidor(int mi_cliente)
 
             }else{
                 //me pide permiso un server
-                //int otro_reloj = buffer;
+               
                 if( buffer > reloj){ 
                     sprintf(debug_msg, "Se actualizo el reloj del server %i - valor antiguo: %i - nuevo valor: %i", mi_rank, reloj, buffer);
                     debug(debug_msg);
                     reloj = buffer; //actualizo mi reloj de ser necesario
                 }
-                // NO ME CONVENCE - QUE PASA SI YO YA ENVIE PEDIDO DE MI CLIENTE?
-                // CREO QUE NO PASA NADA,YA QUE YA ENVIÉ Y NO ENVIO DE NUEVO
-
+              
                 if(cliente_en_zona_critica){
                     sprintf(debug_msg, "Tengo cliente en zona crítica - dejando pedido de server rank %i pendiente", origen);
                     debug(debug_msg);
                     pendientes[origen/2] = 1;
                 } else {
                     if(!hay_pedido_local){
-                        //debug("Dándole permiso a algun server");
                         sprintf(debug_msg, "No hay pedido local - Dando permiso al server rank %i con seq: %i", origen , buffer);
                         debug(debug_msg);
                         MPI_Send(NULL, 0, MPI_INT, origen, TAG_OTORGADO, COMM_WORLD);
@@ -154,28 +151,17 @@ void servidor(int mi_cliente)
                 // aviso que me voy 
                 for (iterador = 0; iterador < cant_ranks/2; iterador++){
                     if( (iterador*2 != mi_rank) && (a_servers_muertos[iterador] == 0) ){
+						//evito enviar el mensaje a los servers que ya estan muertos
                         sprintf(debug_msg, "Avisando que TERMINE a server rank %i", iterador *2);
                         debug(debug_msg);
-                        //MPI_Ssend(NULL, 0, MPI_INT, iterador*2, TAG_TERMINE, COMM_WORLD);
+                        //MPI_Ssend(NULL, 0, MPI_INT, iterador*2, TAG_TERMINE, COMM_WORLD); cambiado por no bloqueante para evitar deadlock
                         MPI_Send(NULL, 0, MPI_INT, iterador*2, TAG_TERMINE, COMM_WORLD);
                     }
                 }
-                //otorgo a mis pendientes el permiso
-                // Y SI NO SE LOS OTORGO EXPLICITAMENTE? - VER MAS ABAJO EN LOS SERVERS QUE LO RECIBEN
-                /*
-                for (iterador = 0; iterador < cant_ranks/2; iterador++){
-                    //if( (pendientes[iterador] == 1) && (iterador*2 != mi_rank) ){
-                    if( (pendientes[iterador] == 1) && (iterador*2 != mi_rank) && (a_servers_muertos[iterador] == 0) ){
-                        //pendientes[iterador] = 0;
-                        sprintf(debug_msg, "Otorgando GRANT a server rank %i", iterador *2);
-                        debug(debug_msg);
-                        MPI_Send(NULL, 0, MPI_INT, iterador*2,TAG_OTORGADO, COMM_WORLD);
-                    }
-                }
-                debug("Le otorgué el GRANT a todos los pendientes");
-                */
-
+                // NO OTORGO EXPLICITAMENTE LOS PERMISOS PENDIENTES - VER MAS ABAJO EN LOS SERVERS QUE RECIBEN TAG_TERMINE
+                
                 // y me voy - Vuelvo al MAIN
+                //PROBAR SI SE PUEDE SACAR EL RETURN**********************************
                 return;
             } else { // Me llegó de otro server
                 assert(origen % 2 == 0); // Es un server
@@ -188,11 +174,9 @@ void servidor(int mi_cliente)
                 // ACA MANEJO LOS PERMISOS PENDIENTES
                 if(hay_pedido_local){
                     assert(!cliente_en_zona_critica);
-                    // Tengo acumulados los que me enviaron - que pasa si el tipo ya me lo habia otorgado y despues se murió -> QUILOMBO
-                    // Por ahi es mejor manejarlo con un array de otorgados - total sé de donde vinieron siempre
-                    //if ( (acumulador + servers_muertos ) == cant_ranks/2 -1) {
                     int puedo_entrar = TRUE;
                     for (iterador = 0; iterador < cant_ranks/2; iterador ++){
+						//si encuentro un server que no otorgo, me fijo que no este muerto
                         if ((servers_que_otorgaron[iterador] == 0) && (a_servers_muertos[iterador] == 0)){
                             puedo_entrar = FALSE;
                             break;
@@ -222,24 +206,25 @@ void servidor(int mi_cliente)
             servers_que_otorgaron[origen/2] = 1;
             int puedo_entrar = TRUE;
             for (iterador = 0; iterador < cant_ranks/2; iterador ++){
+				//si encuentro un server que no otorgo, me fijo que no este muerto
                 if ((servers_que_otorgaron[iterador] == 0) && (a_servers_muertos[iterador] == 0)){
                     puedo_entrar = FALSE;
                     break;
                 }
             }
-            //if( (acumulador + servers_muertos ) == cant_ranks/2 -1){    // >= en lugar de == para solucionar la condicion de carrera
-                                                                        // entre los GRANTS otorgados y la llegada del status muerto
+            
             if (puedo_entrar){
                 sprintf(debug_msg, "Mi cliente entra a zona critica - acumulado = %i - muertos = %i", acumulador, servers_muertos);
                 debug(debug_msg);
                 cliente_en_zona_critica = TRUE;
                 //si todos me dieron permiso le otorgo la zona critica a mi cliente
-                // acumulador = servers_muertos;
-                //el pedido fue cumplido, asi q.. ya no hay pedido local
+             
+             
                 MPI_Send(NULL, 0, MPI_INT, mi_cliente, TAG_OTORGADO, COMM_WORLD);
+                //el pedido fue cumplido, asi q.. ya no hay pedido local
                 hay_pedido_local = FALSE;
                 acumulador = 0; // Reseteo acumulador
-                // Reseteo servers_que_otorgaron
+                // Reseteo servers_que_otorgaron incluyendo a los server que murieron
                 memcpy(servers_que_otorgaron, a_servers_muertos, (cant_ranks/2) * sizeof(int));
                 servers_que_otorgaron[mi_rank/2] = 1;
             }
