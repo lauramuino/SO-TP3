@@ -1,4 +1,6 @@
 #include "srv.h"
+#include <stdlib.h>
+#include <string.h>
 
 int comparacion(int rank_i, int rank_j){
 // Si el primero es menor que el segundo -> TRUE
@@ -21,6 +23,7 @@ void servidor(int mi_cliente)
     int server; // iterador para los fors
     int pendientes[cant_ranks/2];
     int a_servers_muertos[cant_ranks/2];
+    int servers_que_otorgaron[cant_ranks/2];
     int acumulador = 0;
     int reloj = 0;
     int our_number = 0;
@@ -32,7 +35,9 @@ void servidor(int mi_cliente)
     for(iterador = 0; iterador < cant_ranks/2; iterador++){
         pendientes[iterador] = 0;
         a_servers_muertos[iterador] = 0; // Inicializando arreglo de servers muertos
+        servers_que_otorgaron[iterador] = 0;
     }
+    servers_que_otorgaron[mi_rank/2] = 1;
 
     
     while( ! listo_para_salir ) {
@@ -146,7 +151,18 @@ void servidor(int mi_cliente)
                 debug("Mi cliente avisa que terminó");
                 listo_para_salir = TRUE;
                 
+                // aviso que me voy 
+                for (iterador = 0; iterador < cant_ranks/2; iterador++){
+                    if( (iterador*2 != mi_rank) && (a_servers_muertos[iterador] == 0) ){
+                        sprintf(debug_msg, "Avisando que TERMINE a server rank %i", iterador *2);
+                        debug(debug_msg);
+                        //MPI_Ssend(NULL, 0, MPI_INT, iterador*2, TAG_TERMINE, COMM_WORLD);
+                        MPI_Send(NULL, 0, MPI_INT, iterador*2, TAG_TERMINE, COMM_WORLD);
+                    }
+                }
                 //otorgo a mis pendientes el permiso
+                // Y SI NO SE LOS OTORGO EXPLICITAMENTE? - VER MAS ABAJO EN LOS SERVERS QUE LO RECIBEN
+                /*
                 for (iterador = 0; iterador < cant_ranks/2; iterador++){
                     //if( (pendientes[iterador] == 1) && (iterador*2 != mi_rank) ){
                     if( (pendientes[iterador] == 1) && (iterador*2 != mi_rank) && (a_servers_muertos[iterador] == 0) ){
@@ -157,36 +173,65 @@ void servidor(int mi_cliente)
                     }
                 }
                 debug("Le otorgué el GRANT a todos los pendientes");
-                //y aviso que me voy
-                for (iterador = 0; iterador < cant_ranks/2; iterador++){
-                    if( (iterador*2 != mi_rank) && (a_servers_muertos[iterador] == 0) ){
-                        sprintf(debug_msg, "Avisando que TERMINE a server rank %i", iterador *2);
-                        debug(debug_msg);
-                        //MPI_Ssend(NULL, 0, MPI_INT, iterador*2, TAG_TERMINE, COMM_WORLD);
-                        MPI_Send(NULL, 0, MPI_INT, iterador*2, TAG_TERMINE, COMM_WORLD);
-                    }
-                }
+                */
+
                 // y me voy - Vuelvo al MAIN
                 return;
-            }else{ // Me llegó de otro server
+            } else { // Me llegó de otro server
                 assert(origen % 2 == 0); // Es un server
                 servers_muertos++;
                 a_servers_muertos[origen/2] = 1; // Lo marco como muerto
                 pendientes[origen/2] = 0;
                 sprintf(debug_msg, "Se murió el server rank %i - Cantidad de servers muertos %i", origen, servers_muertos);
                 debug(debug_msg);
+                // No me enviaron TAG_OTORGADO al morir, por eso:
+                // ACA MANEJO LOS PERMISOS PENDIENTES
                 if(hay_pedido_local){
-                    // Hace falta otorgarle agregar el GRANT del origen a esta altura?
-                    // Creo que no - Debería haber otorgado el GRANT antes de enviar el TAG_TERMINE
-                }
+                    assert(!cliente_en_zona_critica);
+                    // Tengo acumulados los que me enviaron - que pasa si el tipo ya me lo habia otorgado y despues se murió -> QUILOMBO
+                    // Por ahi es mejor manejarlo con un array de otorgados - total sé de donde vinieron siempre
+                    //if ( (acumulador + servers_muertos ) == cant_ranks/2 -1) {
+                    int puedo_entrar = TRUE;
+                    for (iterador = 0; iterador < cant_ranks/2; iterador ++){
+                        if ((servers_que_otorgaron[iterador] == 0) && (a_servers_muertos[iterador] == 0)){
+                            puedo_entrar = FALSE;
+                            break;
+                        }
+                    } 
+                    if (puedo_entrar){
+                        sprintf(debug_msg, "Mi cliente entra a zona critica - acumulado = %i - muertos = %i", acumulador, servers_muertos);
+                        debug(debug_msg);
+                        cliente_en_zona_critica = TRUE;
+                        MPI_Send(NULL, 0, MPI_INT, mi_cliente, TAG_OTORGADO, COMM_WORLD);
+                        hay_pedido_local = FALSE;
+                        acumulador = 0;
+                        memcpy(servers_que_otorgaron, a_servers_muertos, (cant_ranks/2) * sizeof(int));
+                        servers_que_otorgaron[mi_rank/2] = 1;
+                    } else {
+                        servers_que_otorgaron[origen/2] = 1;
+                    }
+                } 
             }
         }
 
         else if(tag == TAG_OTORGADO){
             //un server me dio permiso
+            sprintf(debug_msg, "Me otorgo permiso el server rank %i", origen);
+            debug(debug_msg);
             acumulador++;
-            if( (acumulador + servers_muertos ) == cant_ranks/2 -1){
-                debug("Mi cliente entra a zona critica");
+            servers_que_otorgaron[origen/2] = 1;
+            int puedo_entrar = TRUE;
+            for (iterador = 0; iterador < cant_ranks/2; iterador ++){
+                if ((servers_que_otorgaron[iterador] == 0) && (a_servers_muertos[iterador] == 0)){
+                    puedo_entrar = FALSE;
+                    break;
+                }
+            }
+            //if( (acumulador + servers_muertos ) == cant_ranks/2 -1){    // >= en lugar de == para solucionar la condicion de carrera
+                                                                        // entre los GRANTS otorgados y la llegada del status muerto
+            if (puedo_entrar){
+                sprintf(debug_msg, "Mi cliente entra a zona critica - acumulado = %i - muertos = %i", acumulador, servers_muertos);
+                debug(debug_msg);
                 cliente_en_zona_critica = TRUE;
                 //si todos me dieron permiso le otorgo la zona critica a mi cliente
                 // acumulador = servers_muertos;
@@ -194,6 +239,9 @@ void servidor(int mi_cliente)
                 MPI_Send(NULL, 0, MPI_INT, mi_cliente, TAG_OTORGADO, COMM_WORLD);
                 hay_pedido_local = FALSE;
                 acumulador = 0; // Reseteo acumulador
+                // Reseteo servers_que_otorgaron
+                memcpy(servers_que_otorgaron, a_servers_muertos, (cant_ranks/2) * sizeof(int));
+                servers_que_otorgaron[mi_rank/2] = 1;
             }
         }
         
