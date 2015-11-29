@@ -1,6 +1,5 @@
 #include "srv.h"
-#include <stdlib.h>
-#include <string.h>
+#include <string.h> // Para memcpy
 
 int comparacion(int rank_i, int rank_j){
 // Si el primero es menor que el segundo -> TRUE
@@ -24,12 +23,12 @@ void servidor(int mi_cliente)
     int pendientes[cant_ranks/2];
     int a_servers_muertos[cant_ranks/2];
     int servers_que_otorgaron[cant_ranks/2];
-    int acumulador = 0;
+    int acumulador = 0; // Solo para mensajes de debug
     int reloj = 0;
     int our_number = 0;
-    int buffer;
-    int servers_muertos = 0;
-    char debug_msg[255];
+    int buffer; // Buffer del mensaje mpi - utilizado para enviar/recibir numero de secuencia (reloj)
+    int servers_muertos = 0; // Solo para mensajes de debug
+    char debug_msg[255]; // para utilizar cadenas con formato para la funcion debug
 
     int iterador; // Inicializando pendientes para RESPUESTAS DEFERIDAS
     for(iterador = 0; iterador < cant_ranks/2; iterador++){
@@ -69,8 +68,8 @@ void servidor(int mi_cliente)
                         if(((server * 2) != mi_rank) && (a_servers_muertos[server] == 0)){
                             sprintf(debug_msg, "Pidiendo permiso al server rank %i con seq: %i", server*2, our_number);
                             debug(debug_msg);
-                            //MPI_Ssend(&buffer, 1, MPI_INT, 2*server, TAG_PEDIDO, COMM_WORLD); // Provoca DEADLOCK - HOLD & WAIT
-                            MPI_Send(&buffer, 1, MPI_INT, 2*server, TAG_PEDIDO, COMM_WORLD);
+                            //MPI_Ssend(&buffer, 1, MPI_INT, 2*server, TAG_PEDIDO, COMM_WORLD); // Provoca DEADLOCK 
+                            MPI_Send(&buffer, 1, MPI_INT, 2*server, TAG_PEDIDO, COMM_WORLD); // Soluciona el HOLD & WAIT
                         }
                     }
                     debug("Marcando que hay pedido local = TRUE");
@@ -159,10 +158,6 @@ void servidor(int mi_cliente)
                     }
                 }
                 // NO OTORGO EXPLICITAMENTE LOS PERMISOS PENDIENTES - VER MAS ABAJO EN LOS SERVERS QUE RECIBEN TAG_TERMINE
-                
-                // y me voy - Vuelvo al MAIN
-                //PROBAR SI SE PUEDE SACAR EL RETURN**********************************
-                return;
             } else { // Me llegó de otro server
                 assert(origen % 2 == 0); // Es un server
                 servers_muertos++;
@@ -219,7 +214,6 @@ void servidor(int mi_cliente)
                 cliente_en_zona_critica = TRUE;
                 //si todos me dieron permiso le otorgo la zona critica a mi cliente
              
-             
                 MPI_Send(NULL, 0, MPI_INT, mi_cliente, TAG_OTORGADO, COMM_WORLD);
                 //el pedido fue cumplido, asi q.. ya no hay pedido local
                 hay_pedido_local = FALSE;
@@ -229,7 +223,6 @@ void servidor(int mi_cliente)
                 servers_que_otorgaron[mi_rank/2] = 1;
             }
         }
-        
     }
     
 }
